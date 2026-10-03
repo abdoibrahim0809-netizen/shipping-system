@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>نظام شركة الشحن</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f4f6fa;color:#172033}
+header{background:#172033;color:#fff;padding:16px;position:sticky;top:0;z-index:5}
+header h2{margin:0 0 12px}.tabs{display:flex;gap:7px;overflow:auto}.tabs button{white-space:nowrap;background:#2c3b55;color:#fff}
+main{max-width:900px;margin:auto;padding:14px}.card{background:#fff;border-radius:14px;padding:15px;margin-bottom:14px;box-shadow:0 2px 10px #0001}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.stats{grid-template-columns:repeat(2,1fr)}
+label{display:block;font-size:13px;margin-bottom:5px;color:#667085}input,select,textarea,button{font:inherit;width:100%;padding:11px;border-radius:9px;border:1px solid #d8dee8}textarea{min-height:75px}
+button{background:#1769e0;color:white;border:0;font-weight:bold}.secondary{background:#667085}.danger{background:#b42318}
+.stat b{display:block;font-size:25px;margin-top:7px}.muted{color:#667085;font-size:13px}
+.row{display:flex;justify-content:space-between;gap:10px;align-items:center}.row button{width:auto;padding:8px 12px}
+.ship{border:1px solid #e3e7ee;border-radius:12px;padding:12px;margin-top:10px}.badge{display:inline-block;padding:5px 8px;border-radius:20px;background:#eef3ff;color:#175cd3;font-size:12px}
+.empty{text-align:center;padding:25px;color:#667085}
+@media(max-width:480px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}}
+@media print{header,form,.no-print,button{display:none!important}body{background:#fff}.card{box-shadow:none;border:0}.print-only{display:block!important}}
+.print-only{display:none}
+</style>
+</head>
+<body>
+<header>
+<h2>🚚 نظام شركة الشحن</h2>
+<div id="userbar" class="muted" style="color:#dbe4f5;margin-bottom:8px"></div>
+<div class="tabs" id="tabs"></div>
+</header>
+<main id="app"></main>
+<script>
+const KEY='shipping_mobile_v2';
+let state=JSON.parse(localStorage.getItem(KEY)||'null');
+if(!state) state={users:[{u:'admin',p:'admin123',role:'مدير',name:'مدير النظام'}],shipments:[],merchants:[],couriers:[],logged:false};
+if(!state.users) state.users=[{u:'admin',p:'admin123',role:'مدير',name:'مدير النظام'}];
+if(!state.merchants) state.merchants=[]; if(!state.couriers) state.couriers=[]; if(!state.shipments) state.shipments=[];
+const statuses=['جديدة','استلمها المندوب','خرجت للتوصيل','تم التسليم','مرتجع','ملغاة'];
+function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function uid(prefix){return prefix+Date.now()+Math.floor(Math.random()*1000)}
+function tracking(){return 'SH-'+String(state.shipments.length+1).padStart(6,'0')}
+function loginScreen(){
+ document.getElementById('app').innerHTML=`<div class="card" style="max-width:430px;margin:55px auto">
+ <h2>تسجيل الدخول</h2><p class="muted">نظام إدارة شركة الشحن</p>
+ <input id="lu" placeholder="اسم المستخدم" value="admin"><br><br>
+ <input id="lp" type="password" placeholder="كلمة المرور" value="admin123"><br><br>
+ <button onclick="login()">دخول</button>
+ <button class="secondary" style="margin-top:9px" onclick="registerCustomerScreen()">تسجيل حساب عميل جديد</button>
+ <p id="le" class="error"></p>
+ </div>`;
+}
+function login(){let u=state.users.find(x=>x.u===lu.value.trim()&&x.p===lp.value);if(!u){le.textContent='اسم المستخدم أو كلمة المرور غير صحيحة';return}state.logged=true;state.current=u;save();render('home')}
+function registerCustomerScreen(){
+ document.getElementById('app').innerHTML=`<div class="card" style="max-width:520px;margin:30px auto">
+ <h2>🛍️ إنشاء حساب عميل</h2><p class="muted">بعد التسجيل تقدر تدخل وتسجل أوردراتك بنفسك.</p>
+ <label>اسم العميل / اسم المتجر</label><input id="cu_name" required>
+ <label>اسم المستخدم</label><input id="cu_user" required>
+ <label>كلمة المرور</label><input id="cu_pass" type="password" minlength="4" required>
+ <label>رقم الهاتف</label><input id="cu_phone">
+ <label>العنوان</label><input id="cu_addr">
+ <br><br><button onclick="registerCustomer()">إنشاء الحساب</button>
+ <button class="secondary" style="margin-top:9px" onclick="loginScreen()">رجوع لتسجيل الدخول</button>
+ <p id="regmsg" class="muted"></p></div>`;
+}
+function registerCustomer(){
+ let name=cu_name.value.trim(), u=cu_user.value.trim(), p=cu_pass.value, phone=cu_phone.value.trim(), addr=cu_addr.value.trim();
+ if(!name||!u||!p){regmsg.textContent='املأ البيانات المطلوبة';return}
+ if(p.length<4){regmsg.textContent='كلمة المرور 4 أحرف أو أرقام على الأقل';return}
+ if(state.users.some(x=>x.u===u)){regmsg.textContent='اسم المستخدم مستخدم بالفعل';return}
+ let merchant={id:uid('M'),name,phone,address:addr,fee:0,customer:true};
+ state.merchants.push(merchant);
+ state.users.push({u,p,role:'عميل',name,merchantId:merchant.id,phone});
+ save();
+ alert('تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن.');
+ loginScreen();
+ lu.value=u;
+}
+function logout(){state.logged=false;delete state.current;save();loginScreen()}
+function render(page){
+ if(!state.logged){loginScreen();return}
+ let customer=state.current?.role==='عميل';
+ document.getElementById('userbar').textContent=`المستخدم: ${state.current?.name||'مدير النظام'} — ${state.current?.role||'مدير'}`;
+ document.getElementById('tabs').innerHTML=customer
+  ? `<button onclick="show('home')">الرئيسية</button><button onclick="show('customerShipments')">أوردراتي</button><button onclick="show('customerOrder')">➕ أوردر جديد</button><button onclick="show('track')">تتبع</button><button onclick="show('settings')">الإعدادات</button><button onclick="logout()" class="danger">خروج</button>`
+  : `<button onclick="show('home')">الرئيسية</button><button onclick="show('shipments')">الشحنات</button><button onclick="show('merchants')">التجار</button><button onclick="show('couriers')">المندوبون</button><button onclick="show('track')">تتبع</button><button onclick="show('reports')">التقارير</button><button onclick="show('settings')">الإعدادات</button><button onclick="logout()" class="danger">خروج</button>`;
+ let a=document.getElementById('app');
+ if(customer && ['shipments','merchants','couriers','reports'].includes(page)) page='home';
+ ({home,shipments,merchants,couriers,track,reports,settings,customerShipments,customerOrder}[page]||home)(a);
+}
+function customerShipments(a){
+ let mine=state.shipments.filter(x=>x.customerUser===state.current.u || x.merchantId===state.current.merchantId);
+ a.innerHTML=`<h3>📦 أوردراتي</h3><div class="card"><button onclick="show('customerOrder')">➕ تسجيل أوردر جديد</button></div>
+ ${mine.slice().reverse().map(shipCard).join('')||'<div class="card empty">لسه مفيش أوردرات.</div>'}`;
+}
+function customerOrder(a){
+ a.innerHTML=`<h3>➕ تسجيل أوردر جديد</h3><div class="card"><form onsubmit="addCustomerShipment(event)">
+ <div class="grid">
+ <div><label>اسم المستلم</label><input id="cr" required></div>
+ <div><label>رقم الهاتف</label><input id="cp2" required></div>
+ <div><label>المحافظة</label><input id="cg" required></div>
+ <div><label>المنطقة</label><input id="ca2" required></div>
+ <div><label>العنوان بالتفصيل</label><input id="caddr" required></div>
+ <div><label>عدد القطع</label><input id="cpieces" type="number" min="1" value="1"></div>
+ <div><label>قيمة الأوردر</label><input id="camount" type="number" min="0" step="0.01" value="0"></div>
+ </div><br><label>ملاحظات</label><textarea id="cnotes"></textarea><br><br>
+ <button>تسجيل الأوردر</button></form></div>`;
+}
+function addCustomerShipment(e){
+ e.preventDefault();
+ let x={tracking:tracking(),merchantId:state.current.merchantId,courierId:'',recipient:cr.value,phone:cp2.value,governorate:cg.value,area:ca2.value,address:caddr.value,pieces:+cpieces.value||1,amount:+camount.value||0,fee:0,status:'جديدة',notes:cnotes.value,customerUser:state.current.u,created:new Date().toLocaleString('ar-EG'),updated:new Date().toLocaleString('ar-EG')};
+ state.shipments.push(x);save();alert('تم تسجيل الأوردر '+x.tracking+' وهو ظاهر الآن للشركة.');show('customerShipments');
+}
+function opts(arr,placeholder){return `<option value="">${placeholder}</option>`+arr.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}
+function home(a){
+ let total=state.shipments.length, del=state.shipments.filter(x=>x.status==='تم التسليم').length;
+ let money=state.shipments.filter(x=>x.status==='تم التسليم').reduce((n,x)=>n+(+x.amount||0),0);
+ a.innerHTML=`<h3>لوحة التحكم</h3><div class="grid stats">
+ <div class="card stat">إجمالي الشحنات<b>${total}</b></div><div class="card stat">تم التسليم<b>${del}</b></div>
+ <div class="card stat">التجار<b>${state.merchants.length}</b></div><div class="card stat">المندوبون<b>${state.couriers.length}</b></div></div>
+ <div class="card"><b>إجمالي قيمة الشحنات المسلّمة</b><h2>${money.toFixed(2)} جنيه</h2></div>
+ <div class="card"><div class="row"><b>آخر الشحنات</b><button onclick="render('shipments')">كل الشحنات</button></div>
+ ${state.shipments.slice(-5).reverse().map(shipCard).join('')||'<div class="empty">لا توجد شحنات</div>'}</div>`;
+}
+function shipCard(x){
+ return `<div class="ship"><div class="row"><b>${esc(x.tracking)}</b><span class="badge">${esc(x.status)}</span></div>
+ <p>المستلم: ${esc(x.recipient)}<br>الهاتف: ${esc(x.phone)}<br>المبلغ: ${x.amount} جنيه</p>
+ <div class="grid"><button onclick="printReceipt('${x.tracking}')">🧾 إيصال</button>
+ <select onchange="changeStatus('${x.tracking}',this.value)">${statuses.map(s=>`<option ${s===x.status?'selected':''}>${s}</option>`).join('')}</select></div></div>`;
+}
+function shipments(a){
+ if(state.current?.role==='عميل'){customerShipments(a);return}
+ a.innerHTML=`<h3>إدارة الشحنات</h3><div class="card"><b>إضافة شحنة جديدة</b>
+ <form onsubmit="addShipment(event)"><div class="grid">
+ <div><label>التاجر</label><select id="m">${opts(state.merchants,'بدون')}</select></div>
+ <div><label>المندوب</label><select id="c">${opts(state.couriers,'بدون')}</select></div>
+ <div><label>اسم المستلم</label><input id="r" required></div><div><label>الهاتف</label><input id="p"></div>
+ <div><label>المحافظة</label><input id="g"></div><div><label>المنطقة</label><input id="ar"></div>
+ <div><label>العنوان</label><input id="addr"></div><div><label>عدد القطع</label><input id="pieces" type="number" min="1" value="1"></div>
+ <div><label>المبلغ</label><input id="amount" type="number" step="0.01" value="0"></div>
+ <div><label>مصاريف الشحن</label><input id="fee" type="number" step="0.01" value="0"></div></div>
+ <br><label>ملاحظات</label><textarea id="notes"></textarea><br><br><button>حفظ وطباعة الإيصال</button></form></div>
+ <div class="card"><input id="search" placeholder="بحث برقم الشحنة أو الاسم أو الهاتف" oninput="filterShips()"></div>
+ <div id="shiplist">${state.shipments.slice().reverse().map(shipCard).join('')||'<div class="card empty">لا توجد شحنات</div>'}</div>`;
+}
+function addShipment(e){
+ e.preventDefault();
+ let x={tracking:tracking(),merchantId:m.value,courierId:c.value,recipient:r.value,phone:p.value,governorate:g.value,area:ar.value,address:addr.value,pieces:+pieces.value||1,amount:+amount.value||0,fee:+fee.value||0,status:'جديدة',notes:notes.value,created:new Date().toLocaleString('ar-EG'),updated:new Date().toLocaleString('ar-EG')};
+ state.shipments.push(x);save();alert('تم إنشاء الشحنة '+x.tracking);printReceipt(x.tracking);render('shipments');
+}
+function filterShips(){let q=(document.getElementById('search')?.value||'').toLowerCase();document.getElementById('shiplist').innerHTML=state.shipments.slice().reverse().filter(x=>(x.tracking+x.recipient+x.phone).toLowerCase().includes(q)).map(shipCard).join('')||'<div class="card empty">لا توجد نتائج</div>'}
+function changeStatus(t,s){let x=state.shipments.find(x=>x.tracking===t);if(x){x.status=s;x.updated=new Date().toLocaleString('ar-EG');save();render('shipments')}}
+function merchants(a){
+ a.innerHTML=`<h3>إدارة التجار</h3><div class="card"><form onsubmit="addMerchant(event)"><div class="grid">
+ <input id="mn" placeholder="اسم التاجر" required><input id="mp" placeholder="الهاتف"><input id="ma" placeholder="العنوان"><input id="mf" type="number" placeholder="مصاريف الشحن"><button>إضافة تاجر</button></div></form></div>
+ <div class="card">${state.merchants.map(x=>`<div class="ship"><div class="row"><b>${esc(x.name)}</b><button onclick="delMerchant('${x.id}')" class="danger">حذف</button></div>${esc(x.phone)}<br>${esc(x.address)}</div>`).join('')||'<div class="empty">لا يوجد تجار</div>'}</div>`;
+}
+function addMerchant(e){e.preventDefault();state.merchants.push({id:uid('M'),name:mn.value,phone:mp.value,address:ma.value,fee:+mf.value||0});save();render('merchants')}
+function delMerchant(id){if(confirm('حذف التاجر؟')){state.merchants=state.merchants.filter(x=>x.id!==id);save();render('merchants')}}
+function couriers(a){
+ a.innerHTML=`<h3>إدارة المندوبين</h3><div class="card"><form onsubmit="addCourier(event)"><div class="grid">
+ <input id="cn" placeholder="اسم المندوب" required><input id="cp" placeholder="الهاتف"><input id="ca" placeholder="المنطقة"><input id="cc" type="number" placeholder="العمولة"><button>إضافة مندوب</button></div></form></div>
+ <div class="card">${state.couriers.map(x=>`<div class="ship"><div class="row"><b>${esc(x.name)}</b><button onclick="delCourier('${x.id}')" class="danger">حذف</button></div>${esc(x.phone)} — ${esc(x.area)}<br>العمولة: ${x.commission}</div>`).join('')||'<div class="empty">لا يوجد مندوبون</div>'}</div>`;
+}
+function addCourier(e){e.preventDefault();state.couriers.push({id:uid('C'),name:cn.value,phone:cp.value,area:ca.value,commission:+cc.value||0});save();render('couriers')}
+function delCourier(id){if(confirm('حذف المندوب؟')){state.couriers=state.couriers.filter(x=>x.id!==id);save();render('couriers')}}
+function track(a){
+ a.innerHTML=`<h3>تتبع شحنة</h3><div class="card"><form onsubmit="doTrack(event)"><input id="tc" placeholder="مثال: SH-000001" required><br><br><button>تتبع الشحنة</button></form></div><div id="trackresult"></div>`;
+}
+function doTrack(e){e.preventDefault();let x=state.shipments.find(x=>x.tracking.toLowerCase()===tc.value.trim().toLowerCase());document.getElementById('trackresult').innerHTML=x?`<div class="card"><h3>${x.tracking}</h3><p>المستلم: ${esc(x.recipient)}</p><p>الهاتف: ${esc(x.phone)}</p><p>العنوان: ${esc(x.governorate)} - ${esc(x.area)} - ${esc(x.address)}</p><h3>الحالة: <span class="badge">${esc(x.status)}</span></h3><p class="muted">آخر تحديث: ${esc(x.updated)}</p></div>`:'<div class="card"><p>لم يتم العثور على الشحنة.</p></div>'}
+function settings(a){
+ a.innerHTML=`<h3>الإعدادات</h3><div class="card"><h3>🔐 تغيير كلمة المرور</h3>
+ <p class="muted">الحساب الحالي: <b>${esc(state.current?.u||'admin')}</b></p>
+ <form onsubmit="changePassword(event)"><label>كلمة المرور الحالية</label><input id="oldpass" type="password" required>
+ <br><label>كلمة المرور الجديدة</label><input id="newpass" type="password" minlength="4" required>
+ <br><label>تأكيد كلمة المرور الجديدة</label><input id="confpass" type="password" minlength="4" required>
+ <br><br><button>حفظ كلمة المرور</button><p id="pwmsg" class="muted"></p></form></div>`;
+}
+function changePassword(e){
+ e.preventDefault();
+ let u=state.users.find(x=>x.u===state.current.u);
+ if(!u || u.p!==oldpass.value){pwmsg.textContent='كلمة المرور الحالية غير صحيحة';pwmsg.style.color='#b42318';return}
+ if(newpass.value!==confpass.value){pwmsg.textContent='تأكيد كلمة المرور غير مطابق';pwmsg.style.color='#b42318';return}
+ if(newpass.value.length<4){pwmsg.textContent='كلمة المرور يجب أن تكون 4 أحرف أو أرقام على الأقل';pwmsg.style.color='#b42318';return}
+ u.p=newpass.value; state.current=u; save();
+ alert('تم تغيير كلمة المرور بنجاح'); render('settings');
+}
+function reports(a){
+ let revenue=state.shipments.filter(x=>x.status==='تم التسليم').reduce((n,x)=>n+(+x.amount||0),0);
+ let fees=state.shipments.reduce((n,x)=>n+(+x.fee||0),0);
+ a.innerHTML=`<h3>التقارير</h3><div class="grid">
+ <div class="card stat">قيمة المسلّم<b>${revenue.toFixed(2)} ج</b></div>
+ <div class="card stat">مصاريف الشحن<b>${fees.toFixed(2)} ج</b></div>
+ </div><div class="card"><b>حالات الشحنات</b>${statuses.map(s=>`<p>${s}: <b>${state.shipments.filter(x=>x.status===s).length}</b></p>`).join('')}</div>
+ <div class="card"><button onclick="exportData()">💾 تصدير نسخة احتياطية</button><br><br><button class="danger" onclick="resetData()">مسح بيانات النظام</button></div>`;
+}
+function exportData(){let blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download='shipping-backup.json';a.click();URL.revokeObjectURL(u)}
+function resetData(){if(confirm('سيتم مسح كل الشحنات والتجار والمندوبين. هل أنت متأكد؟')){state={users:[{u:'admin',p:'admin123',role:'مدير',name:'مدير النظام'}],shipments:[],merchants:[],couriers:[],logged:true,current:{u:'admin',role:'مدير',name:'مدير النظام'}};save();render('home')}}
+function printReceipt(t){
+ let x=state.shipments.find(x=>x.tracking===t);if(!x)return;
+ let m=state.merchants.find(z=>z.id===x.merchantId), c=state.couriers.find(z=>z.id===x.courierId);
+ let w=window.open('','_blank','width=500,height=700');
+ w.document.write(`<html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>إيصال ${x.tracking}</title>
+ <style>body{font-family:Arial;padding:25px;direction:rtl}h2{text-align:center}table{width:100%;border-collapse:collapse}td{padding:9px;border-bottom:1px solid #ddd}.code{font-size:28px;text-align:center;font-weight:bold;margin:20px}</style></head><body>
+ <h2>🚚 إيصال شحنة</h2><div class="code">${x.tracking}</div><table>
+ <tr><td>التاريخ</td><td>${esc(x.created)}</td></tr><tr><td>التاجر</td><td>${esc(m?.name||'-')}</td></tr>
+ <tr><td>المستلم</td><td>${esc(x.recipient)}</td></tr><tr><td>الهاتف</td><td>${esc(x.phone)}</td></tr>
+ <tr><td>العنوان</td><td>${esc(x.governorate)} - ${esc(x.area)} - ${esc(x.address)}</td></tr>
+ <tr><td>عدد القطع</td><td>${x.pieces}</td></tr><tr><td>المبلغ</td><td>${x.amount} جنيه</td></tr>
+ <tr><td>الشحن</td><td>${x.fee} جنيه</td></tr><tr><td>المندوب</td><td>${esc(c?.name||'-')}</td></tr>
+ <tr><td>الحالة</td><td>${esc(x.status)}</td></tr></table><p>${esc(x.notes)}</p>
+ <script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close();
+}
+function show(p){render(p)}
+render(state.logged?'home':'login');
+</script>
+</body></html>
