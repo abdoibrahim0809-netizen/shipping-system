@@ -1,0 +1,4 @@
+Flask
+Gunicorn
+psycopg[binary]
+Werkzeug
